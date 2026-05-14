@@ -466,79 +466,76 @@ export class ClaudeExecutor {
   }
 
   private parseStreamJsonOutput(output: string): { data: any; tokensUsed: number } {
-    // Parse stream-json format from Claude CLI
-    // Each line is a JSON object with different types
+    // Parse stream-json format from Claude CLI.
+    // Each line is a JSON event in the message lifecycle. When Claude tool-calls
+    // (Read/Grep/etc) the stream interleaves multiple assistant messages with
+    // tool_use blocks and user-role tool_result messages. The final structured
+    // answer lives in the LAST assistant message's text — concatenating all
+    // assistant text mixes reasoning ("I'll check these files...") with the
+    // final JSON and breaks parseResponse. So we collect per-message and try
+    // the latest first.
     const lines = output.trim().split('\n');
     let tokensUsed = 0;
-    let responseData: any = null;
-    let assistantText = '';
+    const assistantMessages: string[] = [];
 
     for (const line of lines) {
       try {
         const json = JSON.parse(line);
 
-        // Skip system/init events (CLI metadata)
-        if (json.type === 'system' && json.subtype === 'init') {
-          continue;
-        }
+        if (json.type === 'system' && json.subtype === 'init') continue;
+        if (json.type === 'result') continue;
+        if (json.type === 'rate_limit_event') continue;
+        if (json.type === 'user') continue; // tool_result echoes
 
-        // Skip result events (CLI metadata)
-        if (json.type === 'result') {
-          continue;
-        }
-
-        // Skip rate limit events (CLI metadata, not assistant content)
-        if (json.type === 'rate_limit_event') {
-          continue;
-        }
-
-        // Look for assistant message with actual response
         if (json.type === 'assistant' && json.message?.content) {
-          const content = json.message.content;
-
-          // Extract token usage from message
           if (json.message.usage) {
-            tokensUsed = (json.message.usage.input_tokens || 0) +
-                        (json.message.usage.output_tokens || 0) +
-                        (json.message.usage.cache_read_input_tokens || 0);
+            tokensUsed += (json.message.usage.input_tokens || 0) +
+                          (json.message.usage.output_tokens || 0) +
+                          (json.message.usage.cache_read_input_tokens || 0);
           }
 
-          // Extract text from content blocks
-          for (const block of content) {
+          let msgText = '';
+          for (const block of json.message.content) {
             if (block.type === 'text' && block.text) {
-              assistantText += block.text + '\n';
+              msgText += block.text + '\n';
             }
           }
+          if (msgText.trim()) assistantMessages.push(msgText);
         }
       } catch {
         // Skip invalid JSON lines
       }
     }
 
-    // Parse the accumulated assistant text
-    if (assistantText) {
+    let responseData: any = null;
+
+    // Try latest assistant message first — that's where the final structured
+    // answer lives after any tool-calling.
+    for (let i = assistantMessages.length - 1; i >= 0 && !responseData; i--) {
       try {
-        responseData = this.parseResponse(assistantText);
-        if (!responseData) {
-          // Parsing returned null - log for debugging
-          console.error('Failed to parse assistant response. Text preview:', assistantText.substring(0, 300));
-        }
-      } catch (e) {
-        // Parsing failed - return null
-        console.error('Error parsing assistant response:', e);
-        responseData = null;
+        const parsed = this.parseResponse(assistantMessages[i]);
+        if (parsed) responseData = parsed;
+      } catch {
+        // try previous
       }
     }
 
-    // Final fallback: try to find any JSON in the raw output
-    // But explicitly reject result/system metadata
+    // Fallback: concatenated text (legacy behavior, useful for non-tool-call cases)
+    if (!responseData && assistantMessages.length > 0) {
+      try {
+        responseData = this.parseResponse(assistantMessages.join('\n'));
+      } catch {
+        // continue to raw fallback
+      }
+    }
+
+    // Final fallback: any non-metadata JSON line in the raw stream
     if (!responseData) {
       const filteredOutput = lines
         .filter((line) => {
           try {
             const json = JSON.parse(line);
-            // Reject CLI metadata
-            return !(json.type === 'system' || json.type === 'result' || json.type === 'assistant' || json.type === 'rate_limit_event');
+            return !(json.type === 'system' || json.type === 'result' || json.type === 'assistant' || json.type === 'rate_limit_event' || json.type === 'user');
           } catch {
             return true;
           }
@@ -552,6 +549,11 @@ export class ClaudeExecutor {
           responseData = null;
         }
       }
+    }
+
+    if (!responseData && assistantMessages.length > 0) {
+      const last = assistantMessages[assistantMessages.length - 1];
+      console.error('Failed to parse assistant response. Last message preview:', last.substring(0, 300));
     }
 
     return { data: responseData, tokensUsed };

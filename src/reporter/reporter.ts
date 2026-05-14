@@ -472,6 +472,10 @@ Consult security best practices specific to: ${vuln.type}
   }
 
   async generateSummary(totalBugs: number, totalFiles: number, duration: string): Promise<void> {
+    // Ensure findings dir exists — when a scan finds zero vulns, report() is
+    // never called and the dir was never created, causing readdir to ENOENT.
+    await fs.mkdir(this.findingsDir, { recursive: true });
+
     const summaryPath = path.join(this.findingsDir, 'SUMMARY.md');
 
     // Read all bug directories to compile summary
