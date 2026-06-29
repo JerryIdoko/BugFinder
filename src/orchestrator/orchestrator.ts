@@ -19,6 +19,7 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 
 export interface Config {
+  ecosystem: 'evm' | 'soroban' | 'traditional';
   target: {
     path: string;
     language: string;
@@ -145,7 +146,8 @@ export class Orchestrator {
       maxDepth: config.recursive.max_depth,
       refinementIterations: config.recursive.refinement_iterations,
       strategies: config.recursive.strategies as any[],
-      providerConfig: config.provider
+      providerConfig: config.provider,
+      ecosystem: config.ecosystem
     };
     this.recursiveEngine = new RecursiveStrategyEngine(recursiveConfig);
     this.gitHelper = new GitHelper();

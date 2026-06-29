@@ -2,6 +2,7 @@
 import { Command } from 'commander';
 import { Orchestrator } from './orchestrator/orchestrator.js';
 import { loadConfig } from './utils/config.js';
+import { detectEcosystem, printEcosystemDetection } from './utils/ecosystem-detector.js';
 import chalk from 'chalk';
 import { fileURLToPath } from 'url';
 import { dirname, resolve, sep } from 'path';
@@ -92,8 +93,14 @@ program
       }
 
       // Set target path globally BEFORE any executors are created
-      // This ensures ALL Claude CLI calls run in the target directory
+      // This ensures ALL Claude CLI runs work in the target directory
       ClaudeExecutor.setGlobalTargetPath(targetResolved);
+
+      // Run ecosystem detection before the orchestrator is initialized
+      // This ensures the label prints even if AI provider setup fails
+      const ecosystemResult = await detectEcosystem(targetResolved);
+      printEcosystemDetection(ecosystemResult);
+      config.ecosystem = ecosystemResult.ecosystem;
 
       const orchestrator = new Orchestrator(config);
       await orchestrator.run(options.fresh);

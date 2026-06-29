@@ -12,18 +12,20 @@ import { GeminiExecutor, AgentTask as GeminiTask, AgentResult as GeminiResult } 
 import { IntelligentProviderSelector, TaskCharacteristics } from '../utils/intelligent-provider-selector.js';
 import chalk from 'chalk';
 
-export type Provider = 'claude' | 'gemini';
+export type Provider = 'claude' | 'gemini' | 'deepseek';
 export type ClaudeModel = 'haiku' | 'sonnet' | 'opus';
 export type GeminiModel = 'flash' | 'pro' | 'ultra';
+export type DeepSeekModel = 'flash' | 'pro';
 
 export interface ProviderConfig {
   primary: Provider | 'auto';
   fallback: Provider | 'none';
   autoSwitch: boolean;
-  intelligentSelection?: boolean; // NEW: Enable intelligent provider selection (optional, defaults to true)
+  intelligentSelection?: boolean;
   models?: {
     claude?: ClaudeModel;
     gemini?: GeminiModel;
+    deepseek?: DeepSeekModel;
   };
 }
 
@@ -81,6 +83,9 @@ export class ModelExecutor {
     }
     if (this.config.models?.gemini) {
       console.log(chalk.cyan(`   Gemini Model: ${this.config.models.gemini}`));
+    }
+    if (this.config.models?.deepseek) {
+      console.log(chalk.cyan(`   DeepSeek Model: ${this.config.models.deepseek}`));
     }
     console.log('');
   }
@@ -166,6 +171,8 @@ export class ModelExecutor {
     try {
       if (provider === 'claude') {
         return await this.executeWithClaude(task, model);
+      } else if (provider === 'deepseek') {
+        return await this.executeWithDeepSeek(task, model);
       } else {
         return await this.executeWithGemini(task, model);
       }
@@ -177,6 +184,32 @@ export class ModelExecutor {
         provider
       };
     }
+  }
+
+  /**
+   * Execute with DeepSeek
+   */
+  private async executeWithDeepSeek(task: AgentTask, selectedModel?: string): Promise<AgentResult> {
+    let model: DeepSeekModel | undefined;
+    if (selectedModel) {
+      model = selectedModel as DeepSeekModel;
+    } else if (task.model) {
+      model = task.model as DeepSeekModel;
+    } else if (this.config.models?.deepseek) {
+      model = this.config.models.deepseek;
+    }
+
+    const deepseekTask = {
+      ...task,
+      model: model as 'flash' | 'pro',
+    } as any;
+
+    const result = await this.claudeExecutor.execute(deepseekTask);
+
+    return {
+      ...result,
+      provider: 'deepseek'
+    };
   }
 
   /**
@@ -196,7 +229,7 @@ export class ModelExecutor {
     const claudeTask = {
       ...task,
       model: model as 'haiku' | 'sonnet' | 'opus'
-    } as ClaudeTask;
+    } as any;
 
     const result = await this.claudeExecutor.execute(claudeTask);
 

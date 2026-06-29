@@ -1,6 +1,8 @@
 import { CodeContext, FunctionContext, DataFlow } from '../analyzer/context-analyzer.js';
 import { Vulnerability } from '../detector/vulnerability-detector.js';
 import { ModelExecutor, ProviderConfig } from '../agents/model-executor.js';
+import { IRecursiveStrategy } from './strategy-types.js';
+import { TraditionalStrategy } from './traditional-strategy.js';
 import chalk from 'chalk';
 
 export interface RecursiveAnalysis {
@@ -19,10 +21,10 @@ export interface RecursiveFinding {
 }
 
 export interface CallChain {
-  path: string[];  // ['main', 'handleRequest', 'processData', 'executeQuery']
+  path: string[];
   depth: number;
   tainted: boolean;
-  vulnerableAt?: string;  // Which function in chain has the bug
+  vulnerableAt?: string;
 }
 
 export interface VulnerabilityChain {
@@ -35,9 +37,11 @@ export interface VulnerabilityChain {
 export class RecursiveAnalyzer {
   private maxDepth: number;
   private executor: ModelExecutor;
+  private strategy: IRecursiveStrategy;
 
-  constructor(maxDepth: number = 10, providerConfig?: ProviderConfig) {
+  constructor(maxDepth: number = 10, providerConfig?: ProviderConfig, strategy?: IRecursiveStrategy) {
     this.maxDepth = maxDepth;
+    this.strategy = strategy || new TraditionalStrategy();
     this.executor = new ModelExecutor(providerConfig || {
       primary: 'claude',
       fallback: 'gemini',
@@ -45,9 +49,6 @@ export class RecursiveAnalyzer {
     });
   }
 
-  /**
-   * Recursively analyze a vulnerability to find deeper issues
-   */
   async recursiveDeepen(
     vulnerability: Vulnerability,
     context: CodeContext,
@@ -67,7 +68,6 @@ export class RecursiveAnalyzer {
     const findings: RecursiveFinding[] = [];
     const callChains: CallChain[] = [];
 
-    // 1. Recursively trace call chains
     console.log(chalk.gray(`      → Tracing call chains (depth ${currentDepth}/${this.maxDepth})...`));
     const chains = await this.traceCallChainRecursive(
       vulnerability.location.function,
@@ -80,7 +80,6 @@ export class RecursiveAnalyzer {
       console.log(chalk.gray(`        Found ${chains.length} call chain${chains.length !== 1 ? 's' : ''}`));
     }
 
-    // 2. Recursively expand data flows
     console.log(chalk.gray(`      → Expanding data flows recursively...`));
     const dataFlowFindings = await this.expandDataFlowRecursive(
       vulnerability,
@@ -92,7 +91,6 @@ export class RecursiveAnalyzer {
       console.log(chalk.gray(`        Found ${dataFlowFindings.length} data flow expansion${dataFlowFindings.length !== 1 ? 's' : ''}`));
     }
 
-    // 3. Recursively verify the finding (self-validation)
     if (model) {
       console.log(chalk.gray(`      → Self-verification with ${model.toUpperCase()} (recursive depth ${currentDepth})...`));
     } else {
@@ -111,7 +109,6 @@ export class RecursiveAnalyzer {
       console.log(chalk.yellow(`        ⚠ Verification uncertain`));
     }
 
-    // 4. Look for vulnerability chains (bugs that combine)
     console.log(chalk.gray(`      → Searching for vulnerability chains...`));
     const vulnChains = await this.findVulnerabilityChains(
       vulnerability,
@@ -131,9 +128,6 @@ export class RecursiveAnalyzer {
     };
   }
 
-  /**
-   * Recursively trace call chains to find how functions are called
-   */
   private async traceCallChainRecursive(
     functionName: string,
     context: CodeContext,
@@ -141,29 +135,24 @@ export class RecursiveAnalyzer {
     depth: number
   ): Promise<CallChain[]> {
     if (depth >= this.maxDepth || currentChain.includes(functionName)) {
-      // Prevent infinite recursion
       return [];
     }
 
     const newChain = [...currentChain, functionName];
     const chains: CallChain[] = [];
 
-    // Find all functions that call this function
     const callers = this.findCallers(functionName, context);
 
     if (callers.length === 0) {
-      // Base case: no more callers, this is a root
       chains.push({
         path: newChain.reverse(),
         depth: depth,
         tainted: this.isChainTainted(newChain, context)
       });
     } else {
-      // Recursive case: trace each caller
       for (let i = 0; i < callers.length; i++) {
         const caller = callers[i];
         if (callers.length > 3) {
-          // Only show progress for larger caller lists
           process.stdout.write(chalk.hex('#FF8C00')(`\r        ⚡ Tracing caller ${i + 1}/${callers.length} (depth ${depth + 1})...`));
         }
         const subChains = await this.traceCallChainRecursive(
@@ -182,9 +171,6 @@ export class RecursiveAnalyzer {
     return chains;
   }
 
-  /**
-   * Recursively expand data flows to find all transformation steps
-   */
   private async expandDataFlowRecursive(
     vulnerability: Vulnerability,
     context: CodeContext,
@@ -196,11 +182,8 @@ export class RecursiveAnalyzer {
 
     const findings: RecursiveFinding[] = [];
 
-    // TOKEN-EFFICIENT: Reduce token allocation for deeper recursion levels
-    // Depth 0: 4000 tokens, Depth 1: 3000, Depth 2: 2000, etc.
     const tokensForDepth = Math.max(2000, 4000 - (depth * 1000));
 
-    // TOKEN-EFFICIENT: Only pass minimal context (not full vulnerability object)
     const minimalContext = {
       file: vulnerability.location.file,
       function: vulnerability.location.function,
@@ -208,7 +191,12 @@ export class RecursiveAnalyzer {
       type: vulnerability.type
     };
 
-    // Use agent to recursively analyze data flow
+    const question = this.strategy.getDataFlowPrompt({
+      vulnerability,
+      depth,
+      maxDepth: this.maxDepth,
+    });
+
     const result = await this.executor.execute({
       id: `recursive-dataflow-${vulnerability.id}-depth-${depth}`,
       type: 'context-building',
@@ -217,15 +205,13 @@ export class RecursiveAnalyzer {
         files: [vulnerability.location.file],
         recursiveTask: {
           type: 'expand-data-flow',
-          startingPoint: minimalContext, // Minimal context only
+          startingPoint: minimalContext,
           depth: depth,
-          question: `Recursively trace data flow in ${minimalContext.function} at ${minimalContext.file}:${minimalContext.line}.
-                     Find sources and sinks. Then trace those recursively.
-                     Remaining depth: ${this.maxDepth - depth}`
+          question
         }
       },
       maxTokens: tokensForDepth,
-      model: depth > 2 ? 'haiku' : 'sonnet' // Use cheaper model for deeper recursion
+      model: depth > 2 ? 'haiku' : 'sonnet'
     });
 
     if (result.success && result.output) {
@@ -236,9 +222,7 @@ export class RecursiveAnalyzer {
         details: result.output
       });
 
-      // EARLY STOPPING: Only recurse if new sources found and worth exploring
       if (result.output.newSources && result.output.newSources.length > 0 && depth + 1 < this.maxDepth) {
-        // TOKEN-EFFICIENT: Limit recursive branching (max 3 sources per level)
         const sourcesToExplore = result.output.newSources.slice(0, 3);
 
         if (sourcesToExplore.length < result.output.newSources.length) {
@@ -271,16 +255,14 @@ export class RecursiveAnalyzer {
     return findings;
   }
 
-  /**
-   * Recursively verify findings (model checks its own work)
-   */
   private async recursiveVerification(
     vulnerability: Vulnerability,
     context: CodeContext,
     depth: number,
     model?: 'haiku' | 'sonnet' | 'opus'
   ): Promise<RecursiveFinding> {
-    // Ask the model to verify its own finding
+    const instruction = this.strategy.getVerificationPrompt({ vulnerability, depth });
+
     const result = await this.executor.execute({
       id: `recursive-verify-${vulnerability.id}-depth-${depth}`,
       type: 'vulnerability-detection',
@@ -289,20 +271,11 @@ export class RecursiveAnalyzer {
         verificationTask: {
           vulnerability,
           depth,
-          instruction: `Verify this vulnerability by:
-                       1. Re-analyzing the code independently
-                       2. Checking if the data flow is correct
-                       3. Confirming the exploit path exists
-                       4. Looking for mitigations you might have missed
-
-                       If you find any errors in the original analysis, explain what was wrong.
-                       If you find additional context, include it.
-
-                       Be critical - challenge the original finding.`
+          instruction
         }
       },
       maxTokens: 4000,
-      model: model  // Pass model parameter for escalation
+      model: model
     });
 
     return {
@@ -313,9 +286,6 @@ export class RecursiveAnalyzer {
     };
   }
 
-  /**
-   * Find chains of vulnerabilities that combine for bigger impact
-   */
   private async findVulnerabilityChains(
     vulnerability: Vulnerability,
     context: CodeContext,
@@ -327,7 +297,12 @@ export class RecursiveAnalyzer {
 
     const chains: VulnerabilityChain[] = [];
 
-    // Use recursive agent to find vulnerability chains
+    const instruction = this.strategy.getChainPrompt({
+      vulnerability,
+      depth,
+      maxDepth: this.maxDepth,
+    });
+
     const result = await this.executor.execute({
       id: `vuln-chain-${vulnerability.id}-depth-${depth}`,
       type: 'vulnerability-detection',
@@ -336,20 +311,7 @@ export class RecursiveAnalyzer {
         chainTask: {
           startingVuln: vulnerability,
           depth,
-          instruction: `Look for OTHER vulnerabilities that could chain with this one.
-
-                       Examples:
-                       - XSS + CSRF = account takeover
-                       - SSRF + weak auth = cloud metadata theft
-                       - Path traversal + code execution = RCE
-                       - Info leak + SQL injection = data breach
-
-                       Find vulnerabilities that:
-                       1. Are reachable from this vulnerability
-                       2. Combine to create higher impact
-                       3. Form a complete attack chain
-
-                       Maximum chain depth: ${this.maxDepth - depth}`
+          instruction
         }
       },
       maxTokens: 4000
@@ -369,9 +331,6 @@ export class RecursiveAnalyzer {
     return chains;
   }
 
-  /**
-   * Recursive refinement of POCs
-   */
   async recursiveRefine(
     poc: any,
     vulnerability: Vulnerability,
@@ -384,6 +343,12 @@ export class RecursiveAnalyzer {
     for (let i = 0; i < iterations; i++) {
       process.stdout.write(chalk.hex('#FF8C00')(`\r        ⚡ Refinement iteration ${i + 1}/${iterations}...`));
 
+      const instruction = this.strategy.getPOCRefinementPrompt({
+        poc: refined,
+        vulnerability,
+        iteration: i,
+      });
+
       const result = await this.executor.execute({
         id: `refine-poc-${vulnerability.id}-iter-${i}`,
         type: 'poc-generation',
@@ -392,17 +357,7 @@ export class RecursiveAnalyzer {
           currentPOC: refined,
           refinementTask: {
             iteration: i,
-            instruction: `Improve this POC by:
-                         1. Making it more reliable
-                         2. Adding error handling
-                         3. Making it easier to run
-                         4. Adding more detailed output
-                         5. Fixing any issues from iteration ${i}
-
-                         Previous POC:
-                         ${JSON.stringify(refined, null, 2)}
-
-                         Return an improved version.`
+            instruction
           }
         },
         maxTokens: 4000
@@ -415,7 +370,7 @@ export class RecursiveAnalyzer {
       } else {
         process.stdout.write('\r' + ' '.repeat(80) + '\r');
         console.log(chalk.yellow(`        Iteration ${i + 1}: Could not refine further`));
-        break;  // Can't refine further
+        break;
       }
     }
 
@@ -423,15 +378,11 @@ export class RecursiveAnalyzer {
     return refined;
   }
 
-  /**
-   * Helper: Find all functions that call a given function
-   */
   private findCallers(functionName: string, context: CodeContext): string[] {
     const callers: string[] = [];
 
     for (const file of context.files) {
       for (const func of file.functions) {
-        // Check if function calls the target
         if (func.controlFlow?.some(call => call.includes(functionName))) {
           callers.push(func.name);
         }
@@ -441,11 +392,7 @@ export class RecursiveAnalyzer {
     return callers;
   }
 
-  /**
-   * Helper: Check if a call chain is tainted
-   */
   private isChainTainted(chain: string[], context: CodeContext): boolean {
-    // Check if any function in the chain has tainted data flow
     for (const funcName of chain) {
       for (const file of context.files) {
         const func = file.functions.find(f => f.name === funcName);

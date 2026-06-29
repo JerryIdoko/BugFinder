@@ -3,6 +3,7 @@ import YAML from 'yaml';
 import { Config } from '../orchestrator/orchestrator.js';
 
 const DEFAULT_CONFIG: Config = {
+  ecosystem: 'traditional',
   target: {
     path: '',
     language: 'auto',

@@ -10,7 +10,7 @@
 
 import { getClaudeCostMap, getGeminiCostMap, getClaudeContextWindowMap, getGeminiContextWindowMap } from './model-registry.js';
 
-export type Provider = 'claude' | 'gemini';
+export type Provider = 'claude' | 'gemini' | 'deepseek';
 
 export interface TaskCharacteristics {
   type: string;

@@ -1,7 +1,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
-export type ModelTier = 'haiku' | 'sonnet' | 'opus';
+export type ModelTier = 'haiku' | 'sonnet' | 'opus' | 'flash' | 'pro';
 
 export interface ComplexityMetrics {
   avgFileSize: number;
@@ -253,7 +253,9 @@ export class DynamicModelSelector {
     const costs = {
       'haiku': '$0.80/M input, $4/M output',
       'sonnet': '$3/M input, $15/M output',
-      'opus': '$15/M input, $75/M output'
+      'opus': '$15/M input, $75/M output',
+      'flash': '$0.27/M input, $1.10/M output',
+      'pro': '$2.19/M input, $8.94/M output',
     };
 
     return `Selected ${recommendation.model.toUpperCase()} (${costs[recommendation.model]}) - ${recommendation.reasoning}`;
