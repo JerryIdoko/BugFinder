@@ -30,15 +30,37 @@ export interface AgentResult {
   model?: string;
 }
 
-const DEEPSEEK_BASE_URL = 'https://api.deepseek.com/v1';
-const DEEPSEEK_MODEL_MAP: Record<string, string> = {
-  flash: 'deepseek-chat',
-  pro: 'deepseek-reasoner',
+export type APIProvider = 'deepseek' | 'nvidia';
+
+interface ProviderConfig {
+  baseURL: string;
+  envVar: string;
+  modelMap: Record<string, string>;
+  defaultModel: string;
+  label: string;
+}
+
+const PROVIDER_CONFIGS: Record<APIProvider, ProviderConfig> = {
+  deepseek: {
+    baseURL: 'https://api.deepseek.com/v1',
+    envVar: 'DEEPSEEK_API_KEY',
+    modelMap: { flash: 'deepseek-chat', pro: 'deepseek-reasoner' },
+    defaultModel: 'deepseek-chat',
+    label: 'DeepSeek',
+  },
+  nvidia: {
+    baseURL: 'https://integrate.api.nvidia.com/v1',
+    envVar: 'NVIDIA_API_KEY',
+    modelMap: { flash: 'nvidia/llama-3.1-nemotron-70b-instruct', pro: 'nvidia/llama-3.1-nemotron-70b-instruct' },
+    defaultModel: 'nvidia/llama-3.1-nemotron-70b-instruct',
+    label: 'NVIDIA',
+  },
 };
-const DEFAULT_MODEL = 'deepseek-chat';
 
 export class ClaudeExecutor {
   private client: OpenAI;
+  private provider: APIProvider;
+  private providerCfg: ProviderConfig;
   private tasksInProgress: Map<string, AbortController>;
   private tasksDir: string;
   private static totalTokensUsed: number = 0;
@@ -58,7 +80,7 @@ export class ClaudeExecutor {
     ClaudeExecutor.setGlobalTargetPath(targetPath);
   }
 
-  constructor(apiKey?: string, tasksDir: string = './.sandyaa/tasks', rlmConfig?: RLMConfig) {
+  constructor(apiKey?: string, tasksDir: string = './.sandyaa/tasks', rlmConfig?: RLMConfig, provider?: APIProvider) {
     this.tasksInProgress = new Map();
     this.tasksDir = tasksDir;
     this.modelSelector = new DynamicModelSelector();
@@ -71,20 +93,32 @@ export class ClaudeExecutor {
       this.rlmExecutor = new RLMExecutor(rlmConfig, this.rlmCostTracker, this);
     }
 
-    const key = apiKey || process.env.DEEPSEEK_API_KEY;
+    // Auto-detect provider from env vars if not specified
+    if (apiKey) {
+      this.provider = provider || 'deepseek';
+    } else if (process.env.NVIDIA_API_KEY) {
+      this.provider = 'nvidia';
+    } else if (process.env.DEEPSEEK_API_KEY) {
+      this.provider = 'deepseek';
+    } else {
+      this.provider = provider || 'deepseek';
+    }
+    this.providerCfg = PROVIDER_CONFIGS[this.provider];
+
+    const key = apiKey || process.env[this.providerCfg.envVar];
     if (!key) {
       throw new Error(
-        '[-] Error: DEEPSEEK_API_KEY environment variable is not set.\n' +
-        'Set it via: export DEEPSEEK_API_KEY="your-key-here"'
+        `[-] Error: Neither DEEPSEEK_API_KEY nor NVIDIA_API_KEY is set.\n` +
+        `Set one via: export DEEPSEEK_API_KEY="your-key" or export NVIDIA_API_KEY="your-key"`
       );
     }
 
     this.client = new OpenAI({
       apiKey: key,
-      baseURL: DEEPSEEK_BASE_URL,
+      baseURL: this.providerCfg.baseURL,
     });
 
-    console.log('Using DeepSeek API (OpenAI-compatible endpoint)');
+    console.log(`Using ${this.providerCfg.label} API (OpenAI-compatible endpoint)`);
   }
 
   async execute(task: AgentTask): Promise<AgentResult> {
@@ -164,12 +198,12 @@ export class ClaudeExecutor {
         console.log(`    Model: ${model.toUpperCase()} - ${modelReasoning}`);
       }
 
-      const deepseekModel = DEEPSEEK_MODEL_MAP[model] || DEFAULT_MODEL;
+      const resolvedModel = this.providerCfg.modelMap[model] || this.providerCfg.defaultModel;
       const maxTokens = task.maxTokens || 8000;
 
       // Build request with optional thinking mode
       const requestOptions: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
-        model: deepseekModel,
+        model: resolvedModel,
         max_tokens: maxTokens,
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.0,

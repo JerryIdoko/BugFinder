@@ -12,10 +12,11 @@ import { GeminiExecutor, AgentTask as GeminiTask, AgentResult as GeminiResult } 
 import { IntelligentProviderSelector, TaskCharacteristics } from '../utils/intelligent-provider-selector.js';
 import chalk from 'chalk';
 
-export type Provider = 'claude' | 'gemini' | 'deepseek';
+export type Provider = 'claude' | 'gemini' | 'deepseek' | 'nvidia';
 export type ClaudeModel = 'haiku' | 'sonnet' | 'opus';
 export type GeminiModel = 'flash' | 'pro' | 'ultra';
 export type DeepSeekModel = 'flash' | 'pro';
+export type NvidiaModel = 'flash' | 'pro';
 
 export interface ProviderConfig {
   primary: Provider | 'auto';
@@ -26,6 +27,7 @@ export interface ProviderConfig {
     claude?: ClaudeModel;
     gemini?: GeminiModel;
     deepseek?: DeepSeekModel;
+    nvidia?: NvidiaModel;
   };
 }
 
@@ -49,6 +51,7 @@ export interface AgentResult {
 export class ModelExecutor {
   private claudeExecutor: ClaudeExecutor;
   private geminiExecutor: GeminiExecutor;
+  private nvidiaExecutor: ClaudeExecutor;
   private config: ProviderConfig;
   private currentProvider: Provider;
   private rateLimitTracker: Map<Provider, number> = new Map();
@@ -63,6 +66,7 @@ export class ModelExecutor {
     };
     this.claudeExecutor = new ClaudeExecutor();
     this.geminiExecutor = new GeminiExecutor();
+    this.nvidiaExecutor = new ClaudeExecutor(undefined, undefined, undefined, 'nvidia');
     this.intelligentSelector = new IntelligentProviderSelector();
 
     // Determine initial provider
@@ -86,6 +90,9 @@ export class ModelExecutor {
     }
     if (this.config.models?.deepseek) {
       console.log(chalk.cyan(`   DeepSeek Model: ${this.config.models.deepseek}`));
+    }
+    if (this.config.models?.nvidia) {
+      console.log(chalk.cyan(`   NVIDIA Model: ${this.config.models.nvidia}`));
     }
     console.log('');
   }
@@ -173,6 +180,8 @@ export class ModelExecutor {
         return await this.executeWithClaude(task, model);
       } else if (provider === 'deepseek') {
         return await this.executeWithDeepSeek(task, model);
+      } else if (provider === 'nvidia') {
+        return await this.executeWithNvidia(task, model);
       } else {
         return await this.executeWithGemini(task, model);
       }
@@ -209,6 +218,32 @@ export class ModelExecutor {
     return {
       ...result,
       provider: 'deepseek'
+    };
+  }
+
+  /**
+   * Execute with NVIDIA
+   */
+  private async executeWithNvidia(task: AgentTask, selectedModel?: string): Promise<AgentResult> {
+    let model: NvidiaModel | undefined;
+    if (selectedModel) {
+      model = selectedModel as NvidiaModel;
+    } else if (task.model) {
+      model = task.model as NvidiaModel;
+    } else if (this.config.models?.nvidia) {
+      model = this.config.models.nvidia;
+    }
+
+    const nvidiaTask = {
+      ...task,
+      model: model as 'flash' | 'pro',
+    } as any;
+
+    const result = await this.nvidiaExecutor.execute(nvidiaTask);
+
+    return {
+      ...result,
+      provider: 'nvidia'
     };
   }
 
