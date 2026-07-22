@@ -12,11 +12,14 @@ import { GeminiExecutor, AgentTask as GeminiTask, AgentResult as GeminiResult } 
 import { IntelligentProviderSelector, TaskCharacteristics } from '../utils/intelligent-provider-selector.js';
 import chalk from 'chalk';
 
-export type Provider = 'claude' | 'gemini' | 'deepseek' | 'nvidia';
+export type Provider = 'claude' | 'gemini' | 'deepseek' | 'nvidia' | 'opencode' | 'google' | 'agentrouter';
 export type ClaudeModel = 'haiku' | 'sonnet' | 'opus';
 export type GeminiModel = 'flash' | 'pro' | 'ultra';
 export type DeepSeekModel = 'flash' | 'pro';
 export type NvidiaModel = 'flash' | 'pro';
+export type OpenCodeModel = 'flash' | 'pro';
+export type GoogleModel = 'flash' | 'pro';
+export type AgentRouterModel = 'flash' | 'pro';
 
 export interface ProviderConfig {
   primary: Provider | 'auto';
@@ -28,6 +31,9 @@ export interface ProviderConfig {
     gemini?: GeminiModel;
     deepseek?: DeepSeekModel;
     nvidia?: NvidiaModel;
+    opencode?: OpenCodeModel;
+    google?: GoogleModel;
+    agentrouter?: AgentRouterModel;
   };
 }
 
@@ -52,6 +58,9 @@ export class ModelExecutor {
   private claudeExecutor: ClaudeExecutor;
   private geminiExecutor: GeminiExecutor;
   private nvidiaExecutor: ClaudeExecutor;
+  private opencodeExecutor: ClaudeExecutor;
+  private googleExecutor: ClaudeExecutor;
+  private agentrouterExecutor: ClaudeExecutor;
   private config: ProviderConfig;
   private currentProvider: Provider;
   private rateLimitTracker: Map<Provider, number> = new Map();
@@ -67,6 +76,9 @@ export class ModelExecutor {
     this.claudeExecutor = new ClaudeExecutor();
     this.geminiExecutor = new GeminiExecutor();
     this.nvidiaExecutor = new ClaudeExecutor(undefined, undefined, undefined, 'nvidia');
+    this.opencodeExecutor = new ClaudeExecutor(undefined, undefined, undefined, 'opencode');
+    this.googleExecutor = new ClaudeExecutor(undefined, undefined, undefined, 'google');
+    this.agentrouterExecutor = new ClaudeExecutor(undefined, undefined, undefined, 'agentrouter');
     this.intelligentSelector = new IntelligentProviderSelector();
 
     // Determine initial provider
@@ -93,6 +105,15 @@ export class ModelExecutor {
     }
     if (this.config.models?.nvidia) {
       console.log(chalk.cyan(`   NVIDIA Model: ${this.config.models.nvidia}`));
+    }
+    if (this.config.models?.opencode) {
+      console.log(chalk.cyan(`   OpenCode Model: ${this.config.models.opencode}`));
+    }
+    if (this.config.models?.google) {
+      console.log(chalk.cyan(`   Google Model: ${this.config.models.google}`));
+    }
+    if (this.config.models?.agentrouter) {
+      console.log(chalk.cyan(`   AgentRouter Model: ${this.config.models.agentrouter}`));
     }
     console.log('');
   }
@@ -182,6 +203,12 @@ export class ModelExecutor {
         return await this.executeWithDeepSeek(task, model);
       } else if (provider === 'nvidia') {
         return await this.executeWithNvidia(task, model);
+      } else if (provider === 'opencode') {
+        return await this.executeWithOpenCode(task, model);
+      } else if (provider === 'google') {
+        return await this.executeWithGoogle(task, model);
+      } else if (provider === 'agentrouter') {
+        return await this.executeWithAgentRouter(task, model);
       } else {
         return await this.executeWithGemini(task, model);
       }
@@ -244,6 +271,84 @@ export class ModelExecutor {
     return {
       ...result,
       provider: 'nvidia'
+    };
+  }
+
+  /**
+   * Execute with OpenCode
+   */
+  private async executeWithOpenCode(task: AgentTask, selectedModel?: string): Promise<AgentResult> {
+    let model: OpenCodeModel | undefined;
+    if (selectedModel) {
+      model = selectedModel as OpenCodeModel;
+    } else if (task.model) {
+      model = task.model as OpenCodeModel;
+    } else if (this.config.models?.opencode) {
+      model = this.config.models.opencode;
+    }
+
+    const opencodeTask = {
+      ...task,
+      model: model as 'flash' | 'pro',
+    } as any;
+
+    const result = await this.opencodeExecutor.execute(opencodeTask);
+
+    return {
+      ...result,
+      provider: 'opencode'
+    };
+  }
+
+  /**
+   * Execute with Google Gemini
+   */
+  private async executeWithGoogle(task: AgentTask, selectedModel?: string): Promise<AgentResult> {
+    let model: GoogleModel | undefined;
+    if (selectedModel) {
+      model = selectedModel as GoogleModel;
+    } else if (task.model) {
+      model = task.model as GoogleModel;
+    } else if (this.config.models?.google) {
+      model = this.config.models.google;
+    }
+
+    const googleTask = {
+      ...task,
+      model: model as 'flash' | 'pro',
+    } as any;
+
+    const result = await this.googleExecutor.execute(googleTask);
+
+    return {
+      ...result,
+      provider: 'google'
+    };
+  }
+
+  /**
+   * Execute with AgentRouter
+   */
+  private async executeWithAgentRouter(task: AgentTask, selectedModel?: string): Promise<AgentResult> {
+    let model: AgentRouterModel | undefined;
+    if (selectedModel) {
+      model = selectedModel as AgentRouterModel;
+    } else if (task.model) {
+      model = task.model as AgentRouterModel;
+    } else if (this.config.models?.agentrouter) {
+      model = this.config.models.agentrouter;
+    }
+
+    const agentrouterTask = {
+      ...task,
+      model: model as 'flash' | 'pro',
+    } as any;
+
+    const result = await this.agentrouterExecutor.execute(agentrouterTask);
+
+    return {
+      ...result,
+      provider: 'agentrouter'
     };
   }
 

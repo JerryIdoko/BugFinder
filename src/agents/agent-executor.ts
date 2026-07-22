@@ -30,7 +30,7 @@ export interface AgentResult {
   model?: string;
 }
 
-export type APIProvider = 'deepseek' | 'nvidia';
+export type APIProvider = 'deepseek' | 'nvidia' | 'opencode' | 'google' | 'agentrouter';
 
 interface ProviderConfig {
   baseURL: string;
@@ -42,7 +42,7 @@ interface ProviderConfig {
 
 const PROVIDER_CONFIGS: Record<APIProvider, ProviderConfig> = {
   deepseek: {
-    baseURL: 'https://api.deepseek.com/v1',
+    baseURL: 'https://agentrouter.org/v1',
     envVar: 'DEEPSEEK_API_KEY',
     modelMap: { flash: 'deepseek-chat', pro: 'deepseek-reasoner' },
     defaultModel: 'deepseek-chat',
@@ -51,9 +51,30 @@ const PROVIDER_CONFIGS: Record<APIProvider, ProviderConfig> = {
   nvidia: {
     baseURL: 'https://integrate.api.nvidia.com/v1',
     envVar: 'NVIDIA_API_KEY',
-    modelMap: { flash: 'nvidia/llama-3.1-nemotron-70b-instruct', pro: 'nvidia/llama-3.1-nemotron-70b-instruct' },
-    defaultModel: 'nvidia/llama-3.1-nemotron-70b-instruct',
+    modelMap: { flash: 'meta/llama-3.1-8b-instruct', pro: 'meta/llama-3.1-8b-instruct' },
+    defaultModel: 'meta/llama-3.1-8b-instruct',
     label: 'NVIDIA',
+  },
+  opencode: {
+    baseURL: 'https://opencode.ai/zen/go/v1',
+    envVar: 'OPENCODE_API_KEY',
+    modelMap: { flash: 'deepseek-v4-flash', pro: 'deepseek-v4-pro' },
+    defaultModel: 'deepseek-v4-flash',
+    label: 'OpenCode',
+  },
+  google: {
+    baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    envVar: 'GEMINI_API_KEY',
+    modelMap: { flash: 'gemini-2.0-flash', pro: 'gemini-2.5-pro' },
+    defaultModel: 'gemini-2.0-flash',
+    label: 'Google Gemini',
+  },
+  agentrouter: {
+    baseURL: 'https://agentrouter.org/v1',
+    envVar: 'AGENTROUTER_API_KEY',
+    modelMap: { flash: 'claude-sonnet-4-5-20250929', pro: 'claude-opus-4-8' },
+    defaultModel: 'claude-sonnet-4-5-20250929',
+    label: 'AgentRouter',
   },
 };
 
@@ -96,8 +117,14 @@ export class ClaudeExecutor {
     // Auto-detect provider from env vars if not specified
     if (apiKey) {
       this.provider = provider || 'deepseek';
+    } else if (process.env.AGENTROUTER_API_KEY) {
+      this.provider = 'agentrouter';
+    } else if (process.env.OPENCODE_API_KEY) {
+      this.provider = 'opencode';
     } else if (process.env.NVIDIA_API_KEY) {
       this.provider = 'nvidia';
+    } else if (process.env.GEMINI_API_KEY) {
+      this.provider = 'google';
     } else if (process.env.DEEPSEEK_API_KEY) {
       this.provider = 'deepseek';
     } else {
@@ -108,8 +135,12 @@ export class ClaudeExecutor {
     const key = apiKey || process.env[this.providerCfg.envVar];
     if (!key) {
       throw new Error(
-        `[-] Error: Neither DEEPSEEK_API_KEY nor NVIDIA_API_KEY is set.\n` +
-        `Set one via: export DEEPSEEK_API_KEY="your-key" or export NVIDIA_API_KEY="your-key"`
+        `[-] Error: No API key found. Set one via:\n` +
+        `  export AGENTROUTER_API_KEY="your-key"  (AgentRouter - Claude/GPT)\n` +
+        `  export GEMINI_API_KEY="your-key"       (Google Gemini)\n` +
+        `  export OPENCODE_API_KEY="your-key"     (OpenCode Go)\n` +
+        `  export DEEPSEEK_API_KEY="your-key"     (DeepSeek)\n` +
+        `  export NVIDIA_API_KEY="your-key"       (NVIDIA)`
       );
     }
 
@@ -209,7 +240,7 @@ export class ClaudeExecutor {
         temperature: 0.0,
       };
 
-      if (model === 'pro') {
+      if (model === 'pro' && this.provider === 'deepseek') {
         (requestOptions as any).thinking = { type: 'enabled' };
       }
 
@@ -217,7 +248,7 @@ export class ClaudeExecutor {
 
       const choice = response.choices?.[0];
       if (!choice) {
-        return { success: false, output: null, error: 'No completion choices returned by DeepSeek API' };
+        return { success: false, output: null, error: `No completion choices returned by ${this.providerCfg.label} API` };
       }
 
       // Extract text content, filtering out thinking blocks

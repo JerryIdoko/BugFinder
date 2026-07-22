@@ -30,14 +30,16 @@ export interface Config {
     clone_depth: number;
     cleanup: boolean;
   };
-  // AI Provider Configuration - Auto-switching between Claude/Gemini
+  // AI Provider Configuration - Auto-switching between Claude/Gemini/Google/AgentRouter
   provider?: {
-    primary: 'claude' | 'gemini' | 'auto';  // Primary provider
-    fallback: 'claude' | 'gemini' | 'none'; // Fallback on rate limit
+    primary: 'claude' | 'gemini' | 'google' | 'agentrouter' | 'auto';  // Primary provider
+    fallback: 'claude' | 'gemini' | 'google' | 'agentrouter' | 'none'; // Fallback on rate limit
     autoSwitch: boolean;  // Enable automatic switching
     models?: {
       claude?: 'haiku' | 'sonnet' | 'opus';
       gemini?: 'flash' | 'pro' | 'ultra';
+      google?: 'flash' | 'pro';
+      agentrouter?: 'flash' | 'pro';
     };
   };
   analysis: {

@@ -28,12 +28,14 @@ const DEFAULT_CONFIG: Config = {
     cleanup: true
   },
   provider: {
-    primary: 'claude',
+    primary: 'agentrouter',
     fallback: 'gemini',
     autoSwitch: true,
     models: {
       claude: 'sonnet',
-      gemini: 'pro'
+      gemini: 'pro',
+      google: 'pro',
+      agentrouter: 'pro'
     }
   },
   analysis: {
